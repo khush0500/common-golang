@@ -1,90 +1,19 @@
 package main
 
 import (
-	"bytes"
-	"flag"
 	"fmt"
-	"net/http"
+	"io/ioutil"
 	"os"
 	"runtime"
 	"strings"
 )
 
-const VERSION = "1.0.0"
-
-const greenColor = "\x1b[32m => "
-const redColor = "\x1b[91m ** "
-const defaultStyle = "\x1b[0m"
-const lightGrayColor = "\x1b[37m"
-
-const bootstrapDataSource = "https://kukkar-cdn.s3.ap-south-1.amazonaws.com/newapp"
+const bootstrapDataSource = "/Users/khush.khandelwal/Documents/Junglee_work/common-golang/_newApp"
 
 var ApplicationPath string
 var ApplicationName string
 
 var Rmap map[string]string
-
-type Command struct {
-	Name                      string
-	AltName                   string
-	FlagSet                   *flag.FlagSet
-	Usage                     []string
-	UsageCommand              string
-	Command                   func(args []string, additionalArgs []string)
-	SuppressFlagDocumentation bool
-	FlagDocSubstitute         []string
-}
-
-func generateBootstrap(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("You need to supply application path.")
-	}
-	ApplicationPath = args[0]
-	ApplicationName = prepareApplicationName(ApplicationPath)
-
-	Rmap = initiateReplacementMap()
-	return createDirStructure()
-}
-
-func prepareApplicationName(path string) string {
-	pathArr := strings.Split(path, string("/"))
-	fmt.Printf("Path:%s\n", path)
-	return pathArr[len(pathArr)-1]
-}
-
-type Path string
-
-type DS struct {
-	root *Folder
-}
-
-func (this *DS) Fetch() error {
-
-	this.root.Remote = bootstrapDataSource
-	wd, _ := os.Getwd()
-	this.root.Local = Path(wd)
-	return this.root.BootUp(true)
-}
-
-func (this *DS) Show() {
-	var show func(Folder, string)
-	show = func(folder Folder, spaces string) {
-		//print files
-		if len(folder.Files) > 0 {
-			for _, file := range folder.Files {
-				file.PrintIt(spaces)
-			}
-		}
-		if len(folder.Folders) > 0 {
-			for _, folder := range folder.Folders {
-				folder.PrintIt(spaces)
-				show(folder, spaces+"    ")
-			}
-		}
-
-	}
-	show(*this.root, "    ")
-}
 
 type Folder struct {
 	Name       string
@@ -94,6 +23,76 @@ type Folder struct {
 	Local      Path
 	Remote     Path
 	Spaces     int
+}
+
+type File struct {
+	Name       string
+	ActualName string
+	Extension  string
+	Local      Path
+	Remote     Path
+}
+
+type Path string
+
+type DS struct {
+	root *Folder
+}
+
+func generateBootstrap(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("You need to supply application path.")
+	}
+	ApplicationPath = args[0]
+	ApplicationName = prepareApplicationName(ApplicationPath)
+	Rmap = initiateReplacementMap()
+
+	return createDirStructure()
+
+}
+
+func prepareApplicationName(path string) string {
+	pathArr := strings.Split(path, string("/"))
+	fmt.Printf("Path:%s\n", path)
+	return pathArr[len(pathArr)-1]
+}
+
+func initiateReplacementMap() map[string]string {
+
+	s := make(map[string]string)
+
+	s["{{APP_PATH}}"] = ApplicationPath
+	s["{{APP_NAME}}"] = ApplicationName
+
+	//prepare log path
+	var logpath string
+	if runtime.GOOS == "windows" {
+		//hack for windows
+		logpath = "C:\\\\" + ApplicationName + "\\\\"
+	} else {
+		logpath = "/var/log/" + ApplicationName + "/"
+	}
+
+	s["{{LOG_PATH}}"] = logpath
+
+	os.MkdirAll(logpath, 0777)
+	return s
+}
+
+func (this *Folder) error(err error) error {
+	return err
+}
+
+func (this *File) error(err error) error {
+	return fmt.Errorf("File:%s, Location:%s, Error:%s\n", this.ActualName, this.Local, err.Error())
+}
+
+func (this *DS) Fetch() error {
+
+	this.root.Remote = bootstrapDataSource
+	wd, _ := os.Getwd()
+	this.root.Local = Path(wd)
+	return this.root.BootUp(false)
 }
 
 func (this *Folder) BootUp(skip bool) error {
@@ -150,10 +149,6 @@ func (this *Folder) create(skip bool) error {
 	return nil
 }
 
-func (this *Folder) error(err error) error {
-	return err
-}
-
 func (this *Folder) createFiles() error {
 	if len(this.Files) <= 0 {
 		return nil
@@ -167,56 +162,6 @@ func (this *Folder) createFiles() error {
 		}
 	}
 	return nil
-}
-
-func (this *Folder) PrintIt(spaces string) {
-	fmt.Println(spaces + this.ActualName + "/")
-}
-
-type File struct {
-	Name       string
-	ActualName string
-	Extension  string
-	Local      Path
-	Remote     Path
-}
-
-func (this *File) PrintIt(spaces string) {
-	fmt.Println(spaces + this.GetFileName())
-}
-
-func (this *File) error(err error) error {
-	return fmt.Errorf("File:%s, Location:%s, Error:%s\n", this.ActualName, this.Local, err.Error())
-}
-
-func (this *File) Fetch() ([]byte, error) {
-	var maxretry int = 3
-	var retry int
-	var err error
-	var resp *http.Response
-	var returnData []byte
-	for retry < maxretry {
-		retry++
-		resp, err = http.Get(string(this.Remote))
-		if err != nil {
-			continue
-		}
-		if resp.StatusCode != 200 {
-			resp.Body.Close()
-			err = fmt.Errorf("Got HTTP Status code: %d", resp.StatusCode)
-			continue
-		}
-		b := make([]byte, 0)
-		buf := bytes.NewBuffer(b)
-		_, err := buf.ReadFrom(resp.Body)
-		if err != nil {
-			resp.Body.Close()
-			continue
-		}
-		resp.Body.Close()
-		returnData = buf.Bytes()
-	}
-	return returnData, err
 }
 
 func (this *File) GetFileName() string {
@@ -253,26 +198,40 @@ func (this *File) Create() error {
 	return nil
 }
 
-func initiateReplacementMap() map[string]string {
-
-	s := make(map[string]string)
-
-	s["{{APP_PATH}}"] = ApplicationPath
-	s["{{APP_NAME}}"] = ApplicationName
-
-	//prepare log path
-	var logpath string
-	if runtime.GOOS == "windows" {
-		//hack for windows
-		logpath = "C:\\\\" + ApplicationName + "\\\\"
-	} else {
-		logpath = "/var/log/" + ApplicationName + "/"
+func (this *File) Fetch() ([]byte, error) {
+	returnData, err := ioutil.ReadFile(string(this.Remote))
+	if err != nil {
+		return nil, err
 	}
+	return returnData, nil
+}
 
-	s["{{LOG_PATH}}"] = logpath
+func (this *DS) Show() {
+	var show func(Folder, string)
+	show = func(folder Folder, spaces string) {
+		//print files
+		if len(folder.Files) > 0 {
+			for _, file := range folder.Files {
+				file.PrintIt(spaces)
+			}
+		}
+		if len(folder.Folders) > 0 {
+			for _, folder := range folder.Folders {
+				folder.PrintIt(spaces)
+				show(folder, spaces+"    ")
+			}
+		}
 
-	os.MkdirAll(logpath, 0777)
-	return s
+	}
+	show(*this.root, "    ")
+}
+
+func (this *Folder) PrintIt(spaces string) {
+	fmt.Println(spaces + this.ActualName + "/")
+}
+
+func (this *File) PrintIt(spaces string) {
+	fmt.Println(spaces + this.GetFileName())
 }
 
 func createDirStructure() error {
@@ -303,41 +262,41 @@ func createDirStructure() error {
 					Folder{
 						Name:       "common",
 						ActualName: "common",
-						// Folders: []Folder{
-						// 	Folder{
-						// 		Name:       "factory",
-						// 		ActualName: "factory",
-						// 		Folders: []Folder{
-						// 			Folder{
-						// 				Name:       "sql",
-						// 				ActualName: "sql",
-						// 				Files: []File{
-						// 					File{Name: "healthchecker", ActualName: "healthchecker", Extension: "go"},
-						// 					File{Name: "mysql", ActualName: "mysql", Extension: "go"},
-						// 				},
-						// 			},
-						// 			Folder{
-						// 				Name:       "cache",
-						// 				ActualName: "cache",
-						// 				Files: []File{
-						// 					File{Name: "healthchecker", ActualName: "healthchecker", Extension: "go"},
-						// 					File{Name: "cache", ActualName: "cache", Extension: "go"},
-						// 				},
-						// 			},
-						// 			Folder{
-						// 				Name:       "ravenf",
-						// 				ActualName: "ravenf",
-						// 				Files: []File{
-						// 					File{Name: "ravenf", ActualName: "ravenf", Extension: "go"},
-						// 				},
-						// 			},
-						// 		},
-						// 	},
-						// 	//Folder{Name: "appconstant", ActualName: "appconstant", Files: []File{File{Name: "errcodes", ActualName: "error_codes", Extension: "go"}}},
-						// },
-						// Files: []File{
-						// 	File{Name: "starter", ActualName: "starter", Extension: "go"},
-						// },
+						Folders: []Folder{
+							Folder{
+								Name:       "factory",
+								ActualName: "factory",
+								Folders: []Folder{
+									Folder{
+										Name:       "sql",
+										ActualName: "sql",
+										Files: []File{
+											File{Name: "healthchecker", ActualName: "healthchecker", Extension: "go"},
+											File{Name: "mysql", ActualName: "mysql", Extension: "go"},
+										},
+									},
+									Folder{
+										Name:       "cache",
+										ActualName: "cache",
+										Files: []File{
+											File{Name: "healthchecker", ActualName: "healthchecker", Extension: "go"},
+											File{Name: "cache", ActualName: "cache", Extension: "go"},
+										},
+									},
+									Folder{
+										Name:       "ravenf",
+										ActualName: "ravenf",
+										Files: []File{
+											File{Name: "ravenf", ActualName: "ravenf", Extension: "go"},
+										},
+									},
+								},
+							},
+							Folder{Name: "appconstant", ActualName: "appconstant", Files: []File{File{Name: "errcodes", ActualName: "error_codes", Extension: "go"}}},
+						},
+						Files: []File{
+							File{Name: "starter", ActualName: "starter", Extension: "go"},
+						},
 					},
 					Folder{
 						Name:       ApplicationName + "_controllers",
@@ -362,11 +321,11 @@ func createDirStructure() error {
 						Files: []File{
 							File{Name: "const", ActualName: "const", Extension: "go"},
 							File{Name: "error", ActualName: "error", Extension: "go"},
-							// File{Name: "appname", ActualName: ApplicationName, Extension: "go"},
-							// File{Name: ApplicationName + "impl", ActualName: "appnameimpl", Extension: "go"},
-							// File{Name: "interface", ActualName: "interface", Extension: "go"},
-							// File{Name: "struct", ActualName: "struct", Extension: "go"},
-							// File{Name: "utils", ActualName: "utils", Extension: "go"},
+							File{Name: "appname", ActualName: ApplicationName, Extension: "go"},
+							File{Name: ApplicationName + "impl", ActualName: "appnameimpl", Extension: "go"},
+							File{Name: "interface", ActualName: "interface", Extension: "go"},
+							File{Name: "struct", ActualName: "struct", Extension: "go"},
+							File{Name: "utils", ActualName: "utils", Extension: "go"},
 						},
 					},
 				},

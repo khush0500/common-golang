@@ -6,6 +6,7 @@ import (
 
 	yaml "gopkg.in/yaml.v2"
 )
+
 var Data map[string]interface{}
 
 func main() {
@@ -14,7 +15,6 @@ func main() {
 		log.Panicf("%s", err)
 	}
 
-	
 	err = yaml.Unmarshal(yamlFile, &Data)
 	if err != nil {
 		log.Fatalf("error unmarshalling YAML data: %v", err)
@@ -27,11 +27,9 @@ func main() {
 		}
 	}
 	log.Println(reqs)
-	args := []string{"/_newApp/"}
+	args := []string{"/khush/"}
 	err = generateBootstrap(args)
 	if err != nil {
 		log.Panicf("%s", err)
 	}
-	
-
 }
